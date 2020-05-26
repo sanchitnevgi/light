@@ -12,33 +12,10 @@ import nlp
 
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer
+from pytorch_lightning import loggers
 
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-logger.info('Dowloading the Yelp Polarity dataset')
-yelp = nlp.load_dataset('yelp_polarity')
-tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
-
-train, val, test = nlp.load_dataset('yelp_polarity', split=['train[:90%]', 'train[-10%:]', 'test'])
-
-def _tokenize(example):
-    text = example['text']
-    text = text.strip().replace('\\""', '').replace('\n', '')
-    text = tokenizer.encode(text, max_length=256, pad_to_max_length=True)
-    
-    return { 'text': text }
-
-logger.info('Converting features for train/val/test')
-
-train = train.map(lambda example: _tokenize(example))
-train.set_format(type='torch')
-
-val = val.map(lambda example: _tokenize(example))
-val.set_format(type='torch')
-
-test = test.map(lambda example: _tokenize(example))
-test.set_format(type='torch')
 
 class PolarNet(LightningModule):
     def __init__(self):
@@ -114,9 +91,35 @@ class PolarNet(LightningModule):
         return torch.optim.AdamW(self.parameters())
 
 def main():
+    tb_logger = loggers.TensorBoardLogger('logs/')
+
+    logger.info('Dowloading the Yelp Polarity dataset')
+    yelp = nlp.load_dataset('yelp_polarity')
+    tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
+
+    train, val, test = nlp.load_dataset('yelp_polarity', split=['train[:90%]', 'train[-10%:]', 'test'])
+
+    def _tokenize(example):
+        text = example['text']
+        text = text.strip().replace('\\""', '').replace('\n', '')
+        text = tokenizer.encode(text, max_length=256, pad_to_max_length=True)
+        
+        return { 'text': text }
+
+    logger.info('Converting features for train/val/test')
+
+    train = train.map(lambda example: _tokenize(example))
+    train.set_format(type='torch')
+
+    val = val.map(lambda example: _tokenize(example))
+    val.set_format(type='torch')
+
+    test = test.map(lambda example: _tokenize(example))
+    test.set_format(type='torch')
+
     model = PolarNet()
 
-    trainer = Trainer()
+    trainer = Trainer(gpus=1, logger=tb_logger)
     trainer.fit(model)
     trainer.test()
 
