@@ -3,4 +3,4 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=16000
 
-python train.py
+CUDA_VISIBLE_DEVICES=0 python train.py

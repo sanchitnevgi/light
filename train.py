@@ -31,13 +31,13 @@ def _tokenize(example):
 
 logger.info('Converting features for train/val/test')
 
-train = train.map(_tokenize, load_from_cache_file=False)
+train = train.map(lambda example: _tokenize(example))
 train.set_format(type='torch')
 
-val = val.map(_tokenize, load_from_cache_file=False)
+val = val.map(lambda example: _tokenize(example))
 val.set_format(type='torch')
 
-test = test.map(_tokenize, load_from_cache_file=False)
+test = test.map(lambda example: _tokenize(example))
 test.set_format(type='torch')
 
 class PolarNet(LightningModule):
