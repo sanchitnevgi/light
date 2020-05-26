@@ -13,13 +13,7 @@ from transformers import AlbertTokenizer
 import nlp
 
 from pytorch_lightning.core.lightning import LightningModule
-from pytorch_lightning import Trainer
-from pytorch_lightning import loggers
-
-def set_seed(seed=42):
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+from pytorch_lightning import Trainer, loggers, seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +120,7 @@ class PolarNet(LightningModule):
 
         return {'avg_test_loss': avg_loss, 'log': tensorboard_logs}
     
-    def test_loader(self):
+    def test_dataloader(self):
         test = ReviewDataset('./data', split='test', tokenizer=tokenizer)
         return DataLoader(test, batch_size=16, num_workers=4)
     
@@ -151,11 +145,11 @@ def main():
 
     tb_logger = loggers.TensorBoardLogger('logs/')
 
-    set_seed()
+    seed_everything(42)
 
     model = PolarNet()
 
-    trainer = Trainer(gpus=1, num_nodes=2, distributed_backend='ddp', fast_dev_run=True)
+    trainer = Trainer(gpus=2, distributed_backend='ddp', fast_dev_run=True, deterministic=True)
     trainer.fit(model)
     trainer.test()
 
