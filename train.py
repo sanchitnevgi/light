@@ -1,10 +1,11 @@
+from os import path
 import logging
 from argparse import ArgumentParser
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
 
 import transformers
@@ -22,36 +23,35 @@ def set_seed(seed=42):
 
 logger = logging.getLogger(__name__)
 
-logger.info('Dowloading the Yelp Polarity dataset')
-yelp = nlp.load_dataset('yelp_polarity')
 tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
 
-train, val, test = nlp.load_dataset('yelp_polarity', split=['train[:90%]', 'train[-10%:]', 'test'])
+class ReviewDataset(Dataset):
+    def __init__(self, data_dir, split, tokenizer):
+        if split not in { 'train', 'val', 'test' }:
+            raise ValueError(f'Dataset split must be of type [train, val, test]. Provided f{split}')
+        self.tokenizer = tokenizer
+        self.split = split
+        self.data = []
+        
+        logger.info(f'Reading {split} data')
 
-def _tokenize(text):
-    text = text.strip().replace('\\""', '').replace('\n', '')
-    text = tokenizer.encode(text, max_length=256, pad_to_max_length=True)
-    return text
+        data_file = path.join(data_dir, f'{split}.tsv')
+        with open(data_file) as f:
+            lines = f.readlines()
+            for line in lines:
+                review, label = line.split('\t')
+                self.data.append((review, label))
+    
+    def __getitem__(self, idx):
+        text, label = self.data[idx]
+        
+        input_ids = self.tokenizer.encode(text, max_length=256, pad_to_max_length=True, return_tensors='pt').squeeze(0)
+        label = torch.LongTensor([ int(label) ])
 
-def create_train_features(example):
-    return { 'text': _tokenize(example['text']) }
+        return (input_ids, label)
 
-def create_valid_features(example):
-    return { 'text': _tokenize(example['text']) }
-
-def create_test_features(example):
-    return { 'text': _tokenize(example['text']) }
-
-logger.info('Converting features for train/val/test')
-
-train = train.map(create_train_features)
-train.set_format(type='torch')
-
-val = val.map(create_valid_features)
-val.set_format(type='torch')
-
-test = test.map(create_test_features)
-test.set_format(type='torch')
+    def __len__(self):
+        return len(self.data)
 
 class PolarNet(LightningModule):
     def __init__(self):
@@ -77,7 +77,8 @@ class PolarNet(LightningModule):
         return h_n
     
     def training_step(self, batch, batch_idx):
-        inputs, labels = batch['text'], batch['label']
+        inputs, labels = batch
+        labels = labels.view(-1)
         
         logits = self(inputs)
         loss = F.cross_entropy(logits, labels)
@@ -87,10 +88,13 @@ class PolarNet(LightningModule):
         return {'loss': loss, 'log': tensorboard_logs}
         
     def train_dataloader(self):
+        train = ReviewDataset('./data', split='train', tokenizer=tokenizer)
+
         return DataLoader(train, batch_size=16, num_workers=4, shuffle=True)
     
     def validation_step(self, batch, batch_idx):
-        inputs, labels = batch['text'], batch['label']
+        inputs, labels = batch
+        labels = labels.view(-1)
         
         logits = self(inputs)
         loss = F.cross_entropy(logits, labels)
@@ -98,6 +102,7 @@ class PolarNet(LightningModule):
         return {'val_loss': loss}
     
     def val_dataloader(self):
+        val = ReviewDataset('./data', split='val', tokenizer=tokenizer)
         return DataLoader(val, batch_size=16, num_workers=4)
     
     def validation_epoch_end(self, outputs):
@@ -107,7 +112,8 @@ class PolarNet(LightningModule):
         return {'val_loss': avg_loss, 'log': tensorboard_logs}
     
     def test_step(self, batch, batch_idx):
-        inputs, labels = batch['text'], batch['label']
+        inputs, labels = batch
+        labels = labels.view(-1)
         
         logits = self(inputs)
         loss = F.cross_entropy(logits, labels)
@@ -121,6 +127,7 @@ class PolarNet(LightningModule):
         return {'avg_test_loss': avg_loss, 'log': tensorboard_logs}
     
     def test_loader(self):
+        test = ReviewDataset('./data', split='test', tokenizer=tokenizer)
         return DataLoader(test, batch_size=16, num_workers=4)
     
     def configure_optimizers(self):
@@ -138,6 +145,7 @@ def main():
     parser.add_argument('--log-dir', default="./logs", help="Directory to save Tensorboard logs", type=str)
 
     # Model Arguments
+    parser.add_argument('--embedding-dim', default=300, help="Word embedding dimention", type=int)
 
     args = parser.parse_args()
 
@@ -147,7 +155,7 @@ def main():
 
     model = PolarNet()
 
-    trainer = Trainer(gpus=1, num_nodes=2, fast_dev_run=True, distributed_backend="ddp", logger=tb_logger)
+    trainer = Trainer(gpus=1, num_nodes=2, distributed_backend='ddp', fast_dev_run=True)
     trainer.fit(model)
     trainer.test()
 
