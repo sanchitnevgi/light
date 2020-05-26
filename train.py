@@ -1,4 +1,5 @@
 import logging
+from argparse import ArgumentParser
 
 import torch
 import torch.nn as nn
@@ -14,7 +15,6 @@ from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer
 from pytorch_lightning import loggers
 
-logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 logger.info('Dowloading the Yelp Polarity dataset')
@@ -23,22 +23,29 @@ tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
 
 train, val, test = nlp.load_dataset('yelp_polarity', split=['train[:90%]', 'train[-10%:]', 'test'])
 
-def _tokenize(example):
-    text = example['text']
+def _tokenize(text):
     text = text.strip().replace('\\""', '').replace('\n', '')
     text = tokenizer.encode(text, max_length=256, pad_to_max_length=True)
-    
-    return { 'text': text }
+    return text
+
+def create_train_features(example):
+    return { 'text': _tokenize(example['text']) }
+
+def create_valid_features(example):
+    return { 'text': _tokenize(example['text']) }
+
+def create_test_features(example):
+    return { 'text': _tokenize(example['text']) }
 
 logger.info('Converting features for train/val/test')
 
-train = train.map(lambda example: _tokenize(example))
+train = train.map(create_train_features)
 train.set_format(type='torch')
 
-val = val.map(lambda example: _tokenize(example))
+val = val.map(create_valid_features)
 val.set_format(type='torch')
 
-test = test.map(lambda example: _tokenize(example))
+test = test.map(create_test_features)
 test.set_format(type='torch')
 
 class PolarNet(LightningModule):
@@ -115,6 +122,16 @@ class PolarNet(LightningModule):
         return torch.optim.AdamW(self.parameters())
 
 def main():
+    parser = ArgumentParser()
+
+    # Training arguments
+    parser.add_argument('--num-epochs', required=True, help="The number of epochs", type=int)
+    parser.add_argument('--batch-size', required=True, help="Batch size", type=int)
+    parser.add_argument('--learning-rate', required=True, help="Learning rate", type=float)
+    parser.add_argument('--log-dir', default="./logs", help="Directory to save Tensorboard logs", type=str)
+
+    args = parser.parse_args()
+
     tb_logger = loggers.TensorBoardLogger('logs/')
 
     model = PolarNet()
