@@ -15,6 +15,11 @@ from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer
 from pytorch_lightning import loggers
 
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 logger = logging.getLogger(__name__)
 
 logger.info('Dowloading the Yelp Polarity dataset')
@@ -124,19 +129,25 @@ class PolarNet(LightningModule):
 def main():
     parser = ArgumentParser()
 
+    # Program Arguments
+
     # Training arguments
-    parser.add_argument('--num-epochs', required=True, help="The number of epochs", type=int)
-    parser.add_argument('--batch-size', required=True, help="Batch size", type=int)
-    parser.add_argument('--learning-rate', required=True, help="Learning rate", type=float)
+    parser.add_argument('--num-epochs', required=False, help="The number of epochs", type=int)
+    parser.add_argument('--batch-size', required=False, help="Batch size", type=int)
+    parser.add_argument('--learning-rate', required=False, help="Learning rate", type=float)
     parser.add_argument('--log-dir', default="./logs", help="Directory to save Tensorboard logs", type=str)
+
+    # Model Arguments
 
     args = parser.parse_args()
 
     tb_logger = loggers.TensorBoardLogger('logs/')
 
+    set_seed()
+
     model = PolarNet()
 
-    trainer = Trainer(gpus=1, logger=tb_logger)
+    trainer = Trainer(gpus=1, num_nodes=2, fast_dev_run=True, distributed_backend="ddp", logger=tb_logger)
     trainer.fit(model)
     trainer.test()
 
