@@ -48,15 +48,25 @@ class ReviewDataset(Dataset):
         return len(self.data)
 
 class PolarNet(LightningModule):
-    def __init__(self):
+    def __init__(self, hparams):
         super(PolarNet, self).__init__()
-        
-        self.embedding = nn.Embedding(30000, 300)
 
-        self.lstm = nn.LSTM(300, 768, batch_first=True)
+        self.hparams = hparams
+        
+        self.embedding = nn.Embedding(30000, self.hparams.embedding_dim)
+
+        self.lstm = nn.LSTM(self.hparams.embedding_dim, 768, batch_first=True)
 
         self.linear1 = nn.Linear(768, 100)
         self.linear2 = nn.Linear(100, 2)
+
+    @staticmethod
+    def add_model_specific_arguments(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False)
+
+        parser.add_argument('--embedding-dim', default=300, help="Word embedding dimention", type=int)
+
+        return parser
         
     def forward(self, x):
         x = self.embedding(x)
@@ -82,10 +92,10 @@ class PolarNet(LightningModule):
         return {'loss': loss, 'log': tensorboard_logs}
         
     def train_dataloader(self):
-        train = ReviewDataset('./data', split='train', tokenizer=tokenizer)
+        train = ReviewDataset(self.hparams.data_dir, split='train', tokenizer=tokenizer)
 
-        return DataLoader(train, batch_size=16, num_workers=4, shuffle=True)
-    
+        return DataLoader(train, batch_size=self.hparams.batch_size, num_workers=4, shuffle=True)
+
     def validation_step(self, batch, batch_idx):
         inputs, labels = batch
         labels = labels.view(-1)
@@ -96,8 +106,8 @@ class PolarNet(LightningModule):
         return {'val_loss': loss}
     
     def val_dataloader(self):
-        val = ReviewDataset('./data', split='val', tokenizer=tokenizer)
-        return DataLoader(val, batch_size=16, num_workers=4)
+        val = ReviewDataset(self.hparams.data_dir, split='val', tokenizer=tokenizer)
+        return DataLoader(val, batch_size=self.hparams.batch_size, num_workers=4)
     
     def validation_epoch_end(self, outputs):
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
@@ -121,37 +131,49 @@ class PolarNet(LightningModule):
         return {'avg_test_loss': avg_loss, 'log': tensorboard_logs}
     
     def test_dataloader(self):
-        test = ReviewDataset('./data', split='test', tokenizer=tokenizer)
-        return DataLoader(test, batch_size=16, num_workers=4)
+        test = ReviewDataset(self.hparams.data_dir, split='test', tokenizer=tokenizer)
+        return DataLoader(test, batch_size=self.hparams.batch_size, num_workers=4)
     
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters())
+        return torch.optim.AdamW(self.parameters(), lr=self.hparams.learning_rate)
 
-def main():
-    parser = ArgumentParser()
-
-    # Program Arguments
-
-    # Training arguments
-    parser.add_argument('--num-epochs', required=False, help="The number of epochs", type=int)
-    parser.add_argument('--batch-size', required=False, help="Batch size", type=int)
-    parser.add_argument('--learning-rate', required=False, help="Learning rate", type=float)
-    parser.add_argument('--log-dir', default="./logs", help="Directory to save Tensorboard logs", type=str)
-
-    # Model Arguments
-    parser.add_argument('--embedding-dim', default=300, help="Word embedding dimention", type=int)
-
-    args = parser.parse_args()
-
-    tb_logger = loggers.TensorBoardLogger('logs/')
-
+def main(hparms):
     seed_everything(42)
 
-    model = PolarNet()
+    tb_logger = loggers.TensorBoardLogger(save_dir= 'logs')
 
-    trainer = Trainer(gpus=2, distributed_backend='ddp', fast_dev_run=True, deterministic=True)
+    model = PolarNet(hparams)
+
+    trainer = Trainer(
+        gpus=hparams.gpus, num_nodes=hparams.num_nodes, distributed_backend=hparams.distributed_backend,
+        precision=hparams.precision, early_stop_callback=hparams.early_stop,
+        deterministic=hparams.deterministic, fast_dev_run=hparams.fast_dev_run, logger=tb_logger
+    )
     trainer.fit(model)
     trainer.test()
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    
+    parser = PolarNet.add_model_specific_arguments(parser)
+
+    # Program arguments
+    parser.add_argument('--data-dir', required=True, help="Data directory", type=str)
+    parser.add_argument('--log-dir', default="./logs", help="Directory to save Tensorboard logs", type=str)
+
+    # Training arguments
+    parser.add_argument('--learning-rate', default=0.001, help="Learning rate", type=float)
+    parser.add_argument('--batch-size', default=16, help="Batch size per GPU", type=int)
+    # Arguments used by the Lightning Trainer
+    parser.add_argument('--gpus', default=0, help="The number of GPUs used for training", type=int)
+    parser.add_argument('--num_nodes', default=1, help="The number of nodes used for training", type=int)
+    parser.add_argument('--distributed_backend', default='ddp', help="Distributed computing backend", type=str)
+    parser.add_argument('--precision', default=32, help="FP16/32 training", type=int)
+    parser.add_argument('--early-stop', default=True, action='store_true', help="Early stop if loss non-decreasing")
+    parser.add_argument('--deterministic', default=True, action='store_true', help="For reproducibility")
+    parser.add_argument('--fast-dev-run', default=False, action='store_true', help="Sanity check")
+
+    hparams = parser.parse_args()
+    hparams.batch_size = hparams.batch_size * max(hparams.gpus, 1)
+
+    main(hparams)

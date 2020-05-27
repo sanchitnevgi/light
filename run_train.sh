@@ -3,4 +3,4 @@
 #SBATCH --gres=gpu:2
 #SBATCH --mem=16000
 
-CUDA_VISIBLE_DEVICES=0,1 python train.py
+CUDA_VISIBLE_DEVICES=0,1 python train.py --data-dir=./data --gpus 2 --distributed_backend ddp
