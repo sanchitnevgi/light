@@ -1,0 +1,12 @@
+batch_size: 32
+data_dir: ./data
+deterministic: true
+distributed_backend: ddp
+early_stop: false
+embedding_dim: 300
+fast_dev_run: false
+gpus: 2
+learning_rate: 0.001
+log_dir: ./logs
+num_nodes: 1
+precision: 32
